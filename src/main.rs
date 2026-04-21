@@ -318,6 +318,16 @@ enum Commands {
         yes: bool,
     },
 
+    /// Reset every known setting on a profile back to NVIDIA's predefined defaults
+    #[command(name = "reset-profile")]
+    ResetProfile {
+        /// Profile name
+        name: String,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
     /// Manage application configuration
     #[command(name = "config")]
     Config {
@@ -516,6 +526,9 @@ fn main() -> Result<()> {
         }
         Commands::RemoveApplication { profile, exe, yes } => {
             remove_application(&profile, &exe, yes)?;
+        }
+        Commands::ResetProfile { name, yes } => {
+            reset_profile(&name, yes)?;
         }
         Commands::Config { action } => {
             handle_config(action)?;
@@ -840,15 +853,7 @@ fn set_profile(args: SetProfileArgs<'_>) -> Result<()> {
         _ => PowerManagementMode::Optimal,
     });
 
-    let aniso = anisotropic.and_then(|a| match a {
-        0 => Some(AnisotropicLevel::ApplicationControlled),
-        2 => Some(AnisotropicLevel::X2),
-        4 => Some(AnisotropicLevel::X4),
-        8 => Some(AnisotropicLevel::X8),
-        16 => Some(AnisotropicLevel::X16),
-        _ => None,
-    });
-
+    let aniso = anisotropic.and_then(AnisotropicLevel::from_raw);
     let quality = texture_quality
         .as_deref()
         .and_then(TextureFilterQuality::from_name);
@@ -962,6 +967,37 @@ fn remove_application(profile_name: &str, exe: &str, skip_confirm: bool) -> Resu
 
     manager.remove_application(&profile.name, exe)?;
     println!("✅ Removed '{}' from '{}'", exe, profile.name);
+    Ok(())
+}
+
+fn reset_profile(name: &str, skip_confirm: bool) -> Result<()> {
+    use game_optimizer::drivers::nvidia::NvidiaProfileManager;
+    use std::io::{self, Write};
+
+    let manager = NvidiaProfileManager::new()?;
+
+    let profile = manager
+        .get_profile_full(name)?
+        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", name))?;
+
+    println!("♻️  Reset '{}' to NVIDIA defaults", profile.name);
+    if !profile.settings.is_empty() {
+        println!("   Currently has {} configured settings", profile.settings.len());
+    }
+
+    if !skip_confirm {
+        print!("\nProceed? [y/N] ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    manager.reset_profile(&profile.name)?;
+    println!("✅ Reset profile '{}'", profile.name);
     Ok(())
 }
 
@@ -1934,9 +1970,41 @@ fn handle_backup(action: BackupAction, json_output: bool) -> Result<()> {
                         if let Some(ref exe) = backup.executable {
                             println!("  Exe:     {}", exe);
                         }
-                        println!("  NVIDIA:  {}", if backup.nvidia_settings.is_some() { "Yes" } else { "No" });
-                        println!("  RTSS:    {}", if backup.rtss_settings.is_some() { "Yes" } else { "No" });
-                        println!("  LS:      {}", if backup.lossless_scaling_settings.is_some() { "Yes" } else { "No" });
+
+                        if let Some(ref nv) = backup.nvidia_settings {
+                            println!("\n  🔧 NVIDIA Driver");
+                            println!("  ─────────────────────────────────────");
+                            println!("    Profile:  {}", nv.profile_name);
+                            println!("    Existed:  {}", if nv.existed { "yes (captured prior state)" } else { "no (new profile)" });
+                            let s = &nv.settings;
+                            if let Some(v) = s.frame_rate_limit { println!("    FPS Limit:         {}", v); }
+                            if let Some(v) = s.low_latency_mode { println!("    Low Latency Mode:  {}", v); }
+                            if let Some(ref v) = s.vsync { println!("    VSync:             {}", v); }
+                            if let Some(ref v) = s.power_management { println!("    Power Management:  {}", v); }
+                            if let Some(ref v) = s.texture_filtering { println!("    Texture Filter:    {}", v); }
+                            if let Some(v) = s.anisotropic_filtering { println!("    Anisotropic:       {}x", v); }
+                            if let Some(ref v) = s.threaded_optimization { println!("    Threaded Opt:      {}", v); }
+                            if let Some(ref v) = s.shader_cache { println!("    Shader Cache:      {}", v); }
+                            if let Some(v) = s.cuda_force_p2 { println!("    CUDA Force P2:     {}", v); }
+                            if let Some(ref v) = s.image_sharpening { println!("    Image Sharpening:  {}", v); }
+                        } else {
+                            println!("\n  NVIDIA:  (not captured)");
+                        }
+
+                        if let Some(ref rtss) = backup.rtss_settings {
+                            println!("\n  ⏱️  RTSS");
+                            println!("  ─────────────────────────────────────");
+                            println!("    Profile:    {}", rtss.profile_name);
+                            println!("    Existed:    {}", rtss.existed);
+                            println!("    FPS Limit:  {}", rtss.fps_limit.map(|f| f.to_string()).unwrap_or_else(|| "unlimited".into()));
+                        }
+
+                        if let Some(ref ls) = backup.lossless_scaling_settings {
+                            println!("\n  📐 Lossless Scaling");
+                            println!("  ─────────────────────────────────────");
+                            println!("    Profile: {}", ls.profile_name);
+                            println!("    Existed: {}", ls.existed);
+                        }
                     }
                 }
                 None => {
@@ -2190,14 +2258,7 @@ fn driver_settings_to_profile(
         _ => None, // "auto" / unknown -> leave alone
     });
 
-    let aniso = settings.anisotropic_filtering.and_then(|af| match af {
-        0 => Some(AnisotropicLevel::ApplicationControlled),
-        2 => Some(AnisotropicLevel::X2),
-        4 => Some(AnisotropicLevel::X4),
-        8 => Some(AnisotropicLevel::X8),
-        16 => Some(AnisotropicLevel::X16),
-        _ => None,
-    });
+    let aniso = settings.anisotropic_filtering.and_then(AnisotropicLevel::from_raw);
 
     let quality = settings
         .texture_filtering

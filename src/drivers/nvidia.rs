@@ -394,8 +394,10 @@ impl NvidiaProfileManager {
         })
     }
 
-    /// Reset a profile to default settings by writing each known setting's
-    /// predefined (driver-default) value back.
+    /// Reset a profile to default settings by clearing each known user override
+    /// via `NvAPI_DRS_DeleteProfileSetting`. Clearing a setting lets the driver
+    /// fall back to its predefined/global value, which is what the user wants
+    /// from a "reset" action.
     pub fn reset_profile(&self, name: &str) -> Result<()> {
         let session = self
             .session
@@ -421,19 +423,26 @@ impl NvidiaProfileManager {
             nvapi_ids::QUALITY_ENHANCEMENTS,
             nvapi_ids::LODBIASADJUST,
             nvapi_ids::REFRESH_RATE_OVERRIDE,
+            nvapi_ids::AA_MODE_SELECTOR,
+            nvapi_ids::AA_MODE_METHOD,
+            nvapi_ids::PS_TEXFILTER_DISABLE_TRILIN_SLOPE,
+            nvapi_ids::PS_TEXFILTER_ANISO_OPTS2,
+            nvapi_ids::VRR_OVERLAY_INDICATOR,
             nvapi_ids::CUDA_FORCE_P2_STATE,
+            nvapi_ids::APPIDLE_DYNAMIC_FRL_FPS,
         ];
 
-        let mut reset_count = 0usize;
+        let mut cleared = 0usize;
         for id in ids {
-            if let Some(setting) = session.get_setting(handle, id) {
-                // predefined_value holds the NVIDIA-supplied default when valid.
-                if setting.is_predefined_valid != 0 {
-                    let default_val = unsafe { setting.predefined_value.u32_value };
-                    if session.set_setting_dword(handle, id, default_val) {
-                        reset_count += 1;
-                    }
-                }
+            let status = session.delete_profile_setting(handle, id);
+            if status == 0 {
+                cleared += 1;
+                tracing::debug!("Cleared setting 0x{:08X} on '{}'", id, name);
+            } else {
+                tracing::trace!(
+                    "Skipped clearing 0x{:08X} on '{}' (NVAPI {} = {})",
+                    id, name, status, status_message(status)
+                );
             }
         }
 
@@ -441,7 +450,7 @@ impl NvidiaProfileManager {
             anyhow::bail!("NvAPI_DRS_SaveSettings failed while resetting '{}'", name);
         }
 
-        tracing::info!("Reset {} settings to defaults on profile '{}'", reset_count, name);
+        tracing::info!("Reset {} user overrides on profile '{}'", cleared, name);
         Ok(())
     }
 }

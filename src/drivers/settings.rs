@@ -566,6 +566,19 @@ impl AnisotropicLevel {
         }
     }
 
+    /// Parse a raw integer (0/2/4/8/16) into a typed level.
+    /// Used by both the CLI and the AI response translator.
+    pub fn from_raw(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::ApplicationControlled),
+            2 => Some(Self::X2),
+            4 => Some(Self::X4),
+            8 => Some(Self::X8),
+            16 => Some(Self::X16),
+            _ => None,
+        }
+    }
+
     /// Raw NVAPI DRS DWORD value for `ANISO_MODE_LEVEL`.
     pub fn to_nvapi_value(&self) -> u32 {
         match self {
