@@ -1,0 +1,55 @@
+[package]
+name = "game_optimizer"
+version = "0.1.0"
+edition = "2021"
+description = "AI-powered game settings optimizer for NVIDIA drivers, RTSS, and Lossless Scaling"
+license = "MIT"
+authors = ["Randall"]
+
+[dependencies]
+# NVIDIA API bindings
+nvapi = "0.1"
+nvapi-sys = "0.1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# HTTP client (for future phases)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Directories (XDG compliant)
+dirs = "6"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# URL encoding
+urlencoding = "2"
+scraper = "0.25.0"
+
+# XML parsing (for Lossless Scaling settings)
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+# Windows-specific
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_System_ProcessStatus",
+] }
