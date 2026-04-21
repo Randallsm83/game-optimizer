@@ -170,6 +170,27 @@ pub mod aniso_selector_values {
     pub const CONDITIONAL: u32 = 0x00000002;
 }
 
+/// `AA_MODE_SELECTOR` values.
+pub mod aa_selector_values {
+    pub const APP_CONTROL: u32 = 0x00000000;
+    pub const OVERRIDE: u32 = 0x00000001;
+    pub const ENHANCE: u32 = 0x00000002;
+}
+
+/// A subset of `AA_MODE_METHOD` values covering the common MSAA levels.
+pub mod aa_method_values {
+    pub const NONE: u32 = 0x00;
+    pub const MULTISAMPLE_2X_DIAGONAL: u32 = 0x0E;
+    pub const MULTISAMPLE_4X: u32 = 0x10;
+    pub const MULTISAMPLE_8X: u32 = 0x25;
+}
+
+/// `PS_TEXFILTER_*` on/off toggles (trilinear optimization, aniso sample opt, etc.).
+pub mod texfilter_toggle_values {
+    pub const OFF: u32 = 0x00000000;
+    pub const ON: u32 = 0x00000001;
+}
+
 /// ANISO_MODE_LEVEL values (1 = app controlled / off; other values are raw 2,4,8,16x).
 pub mod aniso_level_values {
     pub const NONE: u32 = 0x00000001;
@@ -405,6 +426,84 @@ impl PowerManagementMode {
     }
 }
 
+/// AA_MODE_SELECTOR: whether the driver overrides, enhances, or defers AA to the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AntiAliasingMode {
+    ApplicationControlled,
+    Override,
+    Enhance,
+}
+
+impl AntiAliasingMode {
+    pub fn to_nvapi_value(&self) -> u32 {
+        match self {
+            Self::ApplicationControlled => aa_selector_values::APP_CONTROL,
+            Self::Override => aa_selector_values::OVERRIDE,
+            Self::Enhance => aa_selector_values::ENHANCE,
+        }
+    }
+
+    pub fn from_nvapi_value(v: u32) -> Option<Self> {
+        match v {
+            aa_selector_values::APP_CONTROL => Some(Self::ApplicationControlled),
+            aa_selector_values::OVERRIDE => Some(Self::Override),
+            aa_selector_values::ENHANCE => Some(Self::Enhance),
+            _ => None,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().replace('-', "_").as_str() {
+            "app" | "application" | "application_controlled" | "app_controlled" => {
+                Some(Self::ApplicationControlled)
+            }
+            "override" => Some(Self::Override),
+            "enhance" => Some(Self::Enhance),
+            _ => None,
+        }
+    }
+}
+
+/// AA_MODE_METHOD: concrete MSAA level when `AntiAliasingMode` is Override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AntiAliasingSetting {
+    None,
+    Msaa2x,
+    Msaa4x,
+    Msaa8x,
+}
+
+impl AntiAliasingSetting {
+    pub fn to_nvapi_value(&self) -> u32 {
+        match self {
+            Self::None => aa_method_values::NONE,
+            Self::Msaa2x => aa_method_values::MULTISAMPLE_2X_DIAGONAL,
+            Self::Msaa4x => aa_method_values::MULTISAMPLE_4X,
+            Self::Msaa8x => aa_method_values::MULTISAMPLE_8X,
+        }
+    }
+
+    pub fn from_nvapi_value(v: u32) -> Option<Self> {
+        match v {
+            aa_method_values::NONE => Some(Self::None),
+            aa_method_values::MULTISAMPLE_2X_DIAGONAL => Some(Self::Msaa2x),
+            aa_method_values::MULTISAMPLE_4X => Some(Self::Msaa4x),
+            aa_method_values::MULTISAMPLE_8X => Some(Self::Msaa8x),
+            _ => None,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().trim_start_matches('x') {
+            "none" | "off" | "0" => Some(Self::None),
+            "2" | "2x" | "msaa2x" | "msaa_2x" => Some(Self::Msaa2x),
+            "4" | "4x" | "msaa4x" | "msaa_4x" => Some(Self::Msaa4x),
+            "8" | "8x" | "msaa8x" | "msaa_8x" => Some(Self::Msaa8x),
+            _ => None,
+        }
+    }
+}
+
 /// Texture filtering - Quality level (maps to `QUALITY_ENHANCEMENTS` DRS setting).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextureFilterQuality {
@@ -545,6 +644,34 @@ pub struct DriverProfile {
     /// Background application FPS cap (0 = off)
     #[serde(default)]
     pub background_fps_limit: Option<u32>,
+
+    /// Anti-aliasing mode (app / override / enhance)
+    #[serde(default)]
+    pub aa_mode: Option<AntiAliasingMode>,
+
+    /// Anti-aliasing setting (MSAA level)
+    #[serde(default)]
+    pub aa_setting: Option<AntiAliasingSetting>,
+
+    /// Texture filtering - LOD bias (signed; typical range -3000..=3000, in fixed-point)
+    #[serde(default)]
+    pub lod_bias: Option<i32>,
+
+    /// Texture filtering - Trilinear optimization on/off
+    #[serde(default)]
+    pub trilinear_optimization: Option<bool>,
+
+    /// Texture filtering - Anisotropic sample optimization on/off
+    #[serde(default)]
+    pub aniso_sample_optimization: Option<bool>,
+
+    /// G-SYNC indicator overlay on/off
+    #[serde(default)]
+    pub gsync_indicator: Option<bool>,
+
+    /// CUDA Force P2 State on/off
+    #[serde(default)]
+    pub cuda_force_p2: Option<bool>,
 }
 
 impl Default for DriverProfile {
@@ -564,6 +691,13 @@ impl Default for DriverProfile {
             texture_filter_quality: None,
             preferred_refresh_rate: None,
             background_fps_limit: None,
+            aa_mode: None,
+            aa_setting: None,
+            lod_bias: None,
+            trilinear_optimization: None,
+            aniso_sample_optimization: None,
+            gsync_indicator: None,
+            cuda_force_p2: None,
         }
     }
 }
@@ -660,6 +794,48 @@ mod tests {
                 Some(q)
             );
         }
+    }
+
+    #[test]
+    fn aa_mode_round_trips() {
+        for m in [
+            AntiAliasingMode::ApplicationControlled,
+            AntiAliasingMode::Override,
+            AntiAliasingMode::Enhance,
+        ] {
+            assert_eq!(AntiAliasingMode::from_nvapi_value(m.to_nvapi_value()), Some(m));
+        }
+    }
+
+    #[test]
+    fn aa_setting_round_trips() {
+        for s in [
+            AntiAliasingSetting::None,
+            AntiAliasingSetting::Msaa2x,
+            AntiAliasingSetting::Msaa4x,
+            AntiAliasingSetting::Msaa8x,
+        ] {
+            assert_eq!(AntiAliasingSetting::from_nvapi_value(s.to_nvapi_value()), Some(s));
+        }
+    }
+
+    #[test]
+    fn aa_setting_parses_names() {
+        assert_eq!(AntiAliasingSetting::from_name("4x"), Some(AntiAliasingSetting::Msaa4x));
+        assert_eq!(AntiAliasingSetting::from_name("msaa_8x"), Some(AntiAliasingSetting::Msaa8x));
+        assert_eq!(AntiAliasingSetting::from_name("NONE"), Some(AntiAliasingSetting::None));
+        assert_eq!(AntiAliasingSetting::from_name("bogus"), None);
+    }
+
+    #[test]
+    fn aa_mode_parses_names() {
+        assert_eq!(AntiAliasingMode::from_name("override"), Some(AntiAliasingMode::Override));
+        assert_eq!(AntiAliasingMode::from_name("ENHANCE"), Some(AntiAliasingMode::Enhance));
+        assert_eq!(
+            AntiAliasingMode::from_name("app-controlled"),
+            Some(AntiAliasingMode::ApplicationControlled)
+        );
+        assert_eq!(AntiAliasingMode::from_name("bogus"), None);
     }
 
     #[test]

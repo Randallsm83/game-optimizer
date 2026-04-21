@@ -276,6 +276,46 @@ enum Commands {
         /// Background application max FPS (0 = off)
         #[arg(long)]
         background_fps: Option<u32>,
+
+        /// Antialiasing mode (app, override, enhance)
+        #[arg(long)]
+        aa_mode: Option<String>,
+
+        /// Antialiasing setting (none, 2x, 4x, 8x)
+        #[arg(long)]
+        aa_setting: Option<String>,
+
+        /// Texture filtering - LOD bias (signed; typical -3000..=3000)
+        #[arg(long)]
+        lod_bias: Option<i32>,
+
+        /// Texture filtering - Trilinear optimization: on/off
+        #[arg(long)]
+        trilinear_optimization: Option<bool>,
+
+        /// Texture filtering - Anisotropic sample optimization: on/off
+        #[arg(long)]
+        aniso_sample_optimization: Option<bool>,
+
+        /// G-SYNC indicator overlay: on/off
+        #[arg(long)]
+        gsync_indicator: Option<bool>,
+
+        /// CUDA Force P2 State: on/off
+        #[arg(long)]
+        cuda_force_p2: Option<bool>,
+    },
+
+    /// Remove one executable from a profile (keeps the profile itself)
+    #[command(name = "remove-application")]
+    RemoveApplication {
+        /// Profile name
+        profile: String,
+        /// Executable name (e.g. eldenring.exe)
+        exe: String,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Manage application configuration
@@ -442,9 +482,16 @@ fn main() -> Result<()> {
             texture_quality,
             preferred_refresh_rate,
             background_fps,
+            aa_mode,
+            aa_setting,
+            lod_bias,
+            trilinear_optimization,
+            aniso_sample_optimization,
+            gsync_indicator,
+            cuda_force_p2,
         } => {
-            set_profile(
-                &game,
+            set_profile(SetProfileArgs {
+                game: &game,
                 fps_limit,
                 low_latency,
                 vsync,
@@ -455,10 +502,20 @@ fn main() -> Result<()> {
                 texture_quality,
                 preferred_refresh_rate,
                 background_fps,
-            )?;
+                aa_mode,
+                aa_setting,
+                lod_bias,
+                trilinear_optimization,
+                aniso_sample_optimization,
+                gsync_indicator,
+                cuda_force_p2,
+            })?;
         }
         Commands::DeleteProfile { name, yes } => {
             delete_profile(&name, yes)?;
+        }
+        Commands::RemoveApplication { profile, exe, yes } => {
+            remove_application(&profile, &exe, yes)?;
         }
         Commands::Config { action } => {
             handle_config(action)?;
@@ -718,8 +775,8 @@ fn get_profile(name: &str, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn set_profile(
-    game: &str,
+struct SetProfileArgs<'a> {
+    game: &'a str,
     fps_limit: Option<u32>,
     low_latency: Option<u32>,
     vsync: Option<String>,
@@ -730,11 +787,42 @@ fn set_profile(
     texture_quality: Option<String>,
     preferred_refresh_rate: Option<bool>,
     background_fps: Option<u32>,
-) -> Result<()> {
+    aa_mode: Option<String>,
+    aa_setting: Option<String>,
+    lod_bias: Option<i32>,
+    trilinear_optimization: Option<bool>,
+    aniso_sample_optimization: Option<bool>,
+    gsync_indicator: Option<bool>,
+    cuda_force_p2: Option<bool>,
+}
+
+fn set_profile(args: SetProfileArgs<'_>) -> Result<()> {
     use game_optimizer::drivers::nvidia::NvidiaProfileManager;
     use game_optimizer::drivers::settings::{
-        AnisotropicLevel, DriverProfile, PowerManagementMode, TextureFilterQuality, VSyncMode,
+        AnisotropicLevel, AntiAliasingMode, AntiAliasingSetting, DriverProfile,
+        PowerManagementMode, TextureFilterQuality, VSyncMode,
     };
+
+    let SetProfileArgs {
+        game,
+        fps_limit,
+        low_latency,
+        vsync,
+        power,
+        anisotropic,
+        mfaa,
+        triple_buffer,
+        texture_quality,
+        preferred_refresh_rate,
+        background_fps,
+        aa_mode,
+        aa_setting,
+        lod_bias,
+        trilinear_optimization,
+        aniso_sample_optimization,
+        gsync_indicator,
+        cuda_force_p2,
+    } = args;
 
     let manager = NvidiaProfileManager::new()?;
 
@@ -764,6 +852,8 @@ fn set_profile(
     let quality = texture_quality
         .as_deref()
         .and_then(TextureFilterQuality::from_name);
+    let aa_mode_val = aa_mode.as_deref().and_then(AntiAliasingMode::from_name);
+    let aa_setting_val = aa_setting.as_deref().and_then(AntiAliasingSetting::from_name);
 
     let profile = DriverProfile {
         name: game.to_string(),
@@ -778,6 +868,13 @@ fn set_profile(
         texture_filter_quality: quality,
         preferred_refresh_rate,
         background_fps_limit: background_fps,
+        aa_mode: aa_mode_val,
+        aa_setting: aa_setting_val,
+        lod_bias,
+        trilinear_optimization,
+        aniso_sample_optimization,
+        gsync_indicator,
+        cuda_force_p2,
         ..Default::default()
     };
 
@@ -829,6 +926,42 @@ fn delete_profile(name: &str, skip_confirm: bool) -> Result<()> {
 
     manager.delete_profile(&profile.name)?;
     println!("✅ Deleted profile '{}'", profile.name);
+    Ok(())
+}
+
+fn remove_application(profile_name: &str, exe: &str, skip_confirm: bool) -> Result<()> {
+    use game_optimizer::drivers::nvidia::NvidiaProfileManager;
+    use std::io::{self, Write};
+
+    let manager = NvidiaProfileManager::new()?;
+
+    // Confirm the profile exists and show current apps.
+    let profile = manager
+        .get_profile_full(profile_name)?
+        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
+
+    let exe_lower = exe.to_lowercase();
+    if !profile.applications.iter().any(|a| a.to_lowercase() == exe_lower) {
+        anyhow::bail!(
+            "Executable '{}' is not attached to profile '{}'. Current apps: {}",
+            exe, profile.name, profile.applications.join(", ")
+        );
+    }
+
+    println!("✂️  Remove '{}' from profile '{}'", exe, profile.name);
+    if !skip_confirm {
+        print!("\nProceed? [y/N] ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    manager.remove_application(&profile.name, exe)?;
+    println!("✅ Removed '{}' from '{}'", exe, profile.name);
     Ok(())
 }
 
@@ -2086,6 +2219,13 @@ fn driver_settings_to_profile(
         texture_filter_quality: quality,
         preferred_refresh_rate: None,
         background_fps_limit: None,
+        aa_mode: None,
+        aa_setting: None,
+        lod_bias: None,
+        trilinear_optimization: None,
+        aniso_sample_optimization: None,
+        gsync_indicator: None,
+        cuda_force_p2: settings.cuda_force_p2,
     }
 }
 
@@ -2115,6 +2255,13 @@ fn apply_nvidia_driver_settings(
     if profile.texture_filter_quality.is_some() { planned += 1; }
     if profile.preferred_refresh_rate.is_some() { planned += 1; }
     if profile.background_fps_limit.is_some() { planned += 1; }
+    if profile.aa_mode.is_some() { planned += 1; }
+    if profile.aa_setting.is_some() { planned += 1; }
+    if profile.lod_bias.is_some() { planned += 1; }
+    if profile.trilinear_optimization.is_some() { planned += 1; }
+    if profile.aniso_sample_optimization.is_some() { planned += 1; }
+    if profile.gsync_indicator.is_some() { planned += 1; }
+    if profile.cuda_force_p2.is_some() { planned += 1; }
 
     manager.set_profile(&profile)?;
     Ok(planned)

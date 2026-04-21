@@ -8,9 +8,9 @@ use std::collections::HashMap;
 
 use super::drs::{DrsSession, NvDRSProfileHandle, status_message, wstring_to_string};
 use super::settings::{
-    AnisotropicLevel, DriverProfile, NvidiaSetting, PowerManagementMode, TextureFilterQuality,
-    VSyncMode, mfaa_values, nvapi_ids, shader_cache_values, thread_control_values,
-    triple_buffer_values,
+    AnisotropicLevel, AntiAliasingMode, AntiAliasingSetting, DriverProfile, NvidiaSetting,
+    PowerManagementMode, TextureFilterQuality, VSyncMode, mfaa_values, nvapi_ids,
+    shader_cache_values, texfilter_toggle_values, thread_control_values, triple_buffer_values,
 };
 
 /// Represents an NVIDIA application profile in the driver
@@ -529,6 +529,52 @@ fn driver_profile_writes(profile: &DriverProfile) -> Vec<(u32, u32, &'static str
             "Background Max FPS",
         ));
     }
+    if let Some(mode) = profile.aa_mode {
+        out.push((
+            nvapi_ids::AA_MODE_SELECTOR,
+            mode.to_nvapi_value(),
+            "Antialiasing - Mode",
+        ));
+    }
+    if let Some(setting) = profile.aa_setting {
+        out.push((
+            nvapi_ids::AA_MODE_METHOD,
+            setting.to_nvapi_value(),
+            "Antialiasing - Setting",
+        ));
+    }
+    if let Some(bias) = profile.lod_bias {
+        // LOD bias is stored as a signed int; reinterpret as u32 for the DWORD write.
+        out.push((
+            nvapi_ids::LODBIASADJUST,
+            bias as u32,
+            "Texture Filtering - LOD Bias",
+        ));
+    }
+    if let Some(on) = profile.trilinear_optimization {
+        let v = if on { texfilter_toggle_values::ON } else { texfilter_toggle_values::OFF };
+        out.push((
+            nvapi_ids::PS_TEXFILTER_DISABLE_TRILIN_SLOPE,
+            v,
+            "Texture Filtering - Trilinear Optimization",
+        ));
+    }
+    if let Some(on) = profile.aniso_sample_optimization {
+        let v = if on { texfilter_toggle_values::ON } else { texfilter_toggle_values::OFF };
+        out.push((
+            nvapi_ids::PS_TEXFILTER_ANISO_OPTS2,
+            v,
+            "Texture Filtering - Anisotropic Sample Opt",
+        ));
+    }
+    if let Some(on) = profile.gsync_indicator {
+        let v = if on { 1 } else { 0 };
+        out.push((nvapi_ids::VRR_OVERLAY_INDICATOR, v, "G-SYNC Indicator"));
+    }
+    if let Some(on) = profile.cuda_force_p2 {
+        let v = if on { 1 } else { 0 };
+        out.push((nvapi_ids::CUDA_FORCE_P2_STATE, v, "CUDA Force P2 State"));
+    }
 
     out
 }
@@ -552,6 +598,11 @@ fn read_known_settings(
         (nvapi_ids::QUALITY_ENHANCEMENTS, NvidiaSetting::TextureFilteringQuality),
         (nvapi_ids::LODBIASADJUST, NvidiaSetting::TextureFilteringLodBias),
         (nvapi_ids::REFRESH_RATE_OVERRIDE, NvidiaSetting::PreferredRefreshRate),
+        (nvapi_ids::AA_MODE_SELECTOR, NvidiaSetting::AntiAliasingMode),
+        (nvapi_ids::AA_MODE_METHOD, NvidiaSetting::AntiAliasingSetting),
+        (nvapi_ids::PS_TEXFILTER_DISABLE_TRILIN_SLOPE, NvidiaSetting::TrilinearOptimization),
+        (nvapi_ids::PS_TEXFILTER_ANISO_OPTS2, NvidiaSetting::AnisotropicSampleOptimization),
+        (nvapi_ids::VRR_OVERLAY_INDICATOR, NvidiaSetting::GSyncIndicator),
         (nvapi_ids::CUDA_FORCE_P2_STATE, NvidiaSetting::CudaForceP2State),
     ];
 
@@ -625,6 +676,30 @@ fn describe_setting_value(setting: NvidiaSetting, value: u32) -> String {
         },
         NvidiaSetting::CudaForceP2State => {
             if value == 0 { "Off".into() } else { "On".into() }
+        }
+        NvidiaSetting::AntiAliasingMode => match AntiAliasingMode::from_nvapi_value(value) {
+            Some(m) => format!("{:?}", m),
+            None => format!("0x{:08X}", value),
+        },
+        NvidiaSetting::AntiAliasingSetting => match AntiAliasingSetting::from_nvapi_value(value) {
+            Some(AntiAliasingSetting::None) => "None".into(),
+            Some(AntiAliasingSetting::Msaa2x) => "MSAA 2x".into(),
+            Some(AntiAliasingSetting::Msaa4x) => "MSAA 4x".into(),
+            Some(AntiAliasingSetting::Msaa8x) => "MSAA 8x".into(),
+            None => format!("0x{:08X}", value),
+        },
+        NvidiaSetting::TrilinearOptimization | NvidiaSetting::AnisotropicSampleOptimization => {
+            match value {
+                texfilter_toggle_values::OFF => "Off".into(),
+                texfilter_toggle_values::ON => "On".into(),
+                other => format!("0x{:08X}", other),
+            }
+        }
+        NvidiaSetting::GSyncIndicator => {
+            if value == 0 { "Off".into() } else { "On".into() }
+        }
+        NvidiaSetting::TextureFilteringLodBias => {
+            format!("{}", value as i32)
         }
         NvidiaSetting::FrameRateLimit => {
             if value == 0 {

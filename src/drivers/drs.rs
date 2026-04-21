@@ -48,6 +48,8 @@ pub const NVAPI_INVALID_POINTER: NvAPI_Status = -14;
 pub const NVAPI_NO_GL_EXPERT: NvAPI_Status = -12;
 pub const NVAPI_INSTRUMENTATION_DISABLED: NvAPI_Status = -13;
 pub const NVAPI_ACCESS_DENIED: NvAPI_Status = -15;
+/// Returned by `SetSetting` when the setting ID is not recognised by the driver.
+pub const NVAPI_SETTING_NOT_FOUND: NvAPI_Status = -137;
 
 /// Translate a common NVAPI status code to a short human-readable name.
 /// Covers the codes we care about; unknown values fall back to `"UNKNOWN"`.
@@ -69,6 +71,7 @@ pub fn status_message(status: NvAPI_Status) -> &'static str {
         NVAPI_INSTRUMENTATION_DISABLED => "INSTRUMENTATION_DISABLED",
         NVAPI_INVALID_POINTER => "INVALID_POINTER",
         NVAPI_ACCESS_DENIED => "ACCESS_DENIED",
+        NVAPI_SETTING_NOT_FOUND => "SETTING_NOT_FOUND",
         _ => "UNKNOWN",
     }
 }
