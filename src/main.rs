@@ -1246,7 +1246,7 @@ async fn recommend(
     };
 
     // Call Claude API
-    let client = ClaudeClient::new().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let client = ClaudeClient::new("game-settings-recommend").map_err(|e| anyhow::anyhow!("{}", e))?;
     let response: RecommendationResponse = client
         .send_json_message(&request.system_prompt(), &request.user_message())
         .await
@@ -1740,7 +1740,7 @@ async fn optimize(
             driver_only,
         };
 
-        let client = ClaudeClient::new().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let client = ClaudeClient::new("game-optimize").map_err(|e| anyhow::anyhow!("{}", e))?;
         client
             .send_json_message(&request.system_prompt(), &request.user_message())
             .await

@@ -50,6 +50,8 @@ game_optimizer backup restore <backup-id> -y
 
 Global flags: `--json`, `-v/--verbose`, `--debug`.
 
+Optional: set `CAVE_GATEWAY_URL` (e.g. `http://127.0.0.1:8787`) to meter Claude spend through a Caveman gateway under app slug `game-optimizer`. Requests opt out of gateway transforms, so bytes are forwarded unchanged.
+
 ## `set-profile` flag coverage
 
 Every typed field on `DriverProfile` is exposed:

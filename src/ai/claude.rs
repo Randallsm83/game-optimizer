@@ -4,6 +4,7 @@
 //! game optimization recommendations.
 
 use anyhow::Result;
+use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -20,6 +21,7 @@ pub struct ClaudeClient {
     client: Client,
     api_key: String,
     model: String,
+    url: String,
 }
 
 /// Error types for Claude API operations
@@ -42,12 +44,27 @@ pub enum ClaudeError {
 }
 
 impl ClaudeClient {
-    /// Create a new Claude client with API key from config or environment
-    pub fn new() -> Result<Self, ClaudeError> {
+    /// Create a new Claude client with API key from config or environment.
+    /// `workflow` is the Caveman workflow slug for the calling job (lowercase [a-z0-9_-]).
+    pub fn new(workflow: &'static str) -> Result<Self, ClaudeError> {
         let api_key = Self::get_api_key()?;
-        
+
+        // Optional Caveman gateway (LLM spend metering). Unset → Anthropic directly.
+        let mut headers = HeaderMap::new();
+        let url = match std::env::var("CAVE_GATEWAY_URL") {
+            Ok(gw) if !gw.is_empty() => {
+                // Record only: forward bytes unchanged even if the gateway runs a compression mode.
+                headers.insert("x-cave-transforms", HeaderValue::from_static("caveman.pass-through.v1"));
+                // Groups gateway spend by the job that made the call.
+                headers.insert("x-cave-workflow", HeaderValue::from_static(workflow));
+                format!("{}/w/game-optimizer/v1/messages", gw.trim_end_matches('/'))
+            }
+            _ => ANTHROPIC_API_URL.to_string(),
+        };
+
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
+            .default_headers(headers)
             .build()
             .map_err(|e| ClaudeError::RequestFailed(e.to_string()))?;
 
@@ -55,12 +72,13 @@ impl ClaudeClient {
             client,
             api_key,
             model: DEFAULT_MODEL.to_string(),
+            url,
         })
     }
 
     /// Create with a specific model
-    pub fn with_model(model: &str) -> Result<Self, ClaudeError> {
-        let mut client = Self::new()?;
+    pub fn with_model(model: &str, workflow: &'static str) -> Result<Self, ClaudeError> {
+        let mut client = Self::new(workflow)?;
         client.model = model.to_string();
         Ok(client)
     }
@@ -99,7 +117,7 @@ impl ClaudeClient {
         };
 
         let response = self.client
-            .post(ANTHROPIC_API_URL)
+            .post(&self.url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json")
@@ -161,10 +179,11 @@ impl ClaudeClient {
 
         let client = self.client.clone();
         let api_key = self.api_key.clone();
+        let url = self.url.clone();
 
         tokio::spawn(async move {
             let response = match client
-                .post(ANTHROPIC_API_URL)
+                .post(&url)
                 .header("x-api-key", &api_key)
                 .header("anthropic-version", ANTHROPIC_VERSION)
                 .header("content-type", "application/json")
